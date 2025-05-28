@@ -3,14 +3,14 @@
 layout: list
 
 # The title of the tag's page.
-title: Web Development
+title:  Algorithm & Data Structure
 
 # The name of the tag, used in a post's front matter (e.g. tags: [<slug>]).
-slug: web_development
+slug: algorithmdatastructure
 
 # (Optional) Write a short (~150 characters) description of this featured tag.
 description: >
-  Web Development.
+  Algorithm and Data Structure.
 
 # (Optional) You can disable grouping posts by date.
 # no_groups: true
