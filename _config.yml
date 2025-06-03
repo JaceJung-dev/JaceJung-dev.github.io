@@ -58,8 +58,8 @@ menu:
         url:           /mldlai/
       - title:         Web development
         url:           /webdevelopment/
-      - title:         Algorithm & Data Structure
-        url:           /algorithmdatastructure/
+      - title:         Data Structure & Algorithm
+        url:           /dsa/
   - title:             Dev Log
     url:               /devlog/
   - title:             Tech Stack
