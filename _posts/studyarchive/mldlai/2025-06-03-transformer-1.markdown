@@ -2,9 +2,12 @@
 layout: post
 title:  "Transformer 1"
 date:   2025-06-03 16:38:50 +0900
-categories: [studyarchive,mldlai]
+categories:
+    - studyarchive
+    - mldlai
+    
 ---
-# Transformer 1
+# [AI] Transformer 1
 
 ## Background
 1. 정보를 나타내는 텐서는 Weight matrix를 통과해도 원래 가지고 있는 정보는 보존.
