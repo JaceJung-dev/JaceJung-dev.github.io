@@ -102,7 +102,7 @@ paginate_path:         /:num/
 # ---------------------------------------------------------------------------------------
 
 # This will use the gem `jekyll-theme-hydejack`, as defined in the sibling `Gemfile`.
-theme: jekyll-theme-hydejack
+# theme: jekyll-theme-hydejack
 
 # You can uncomment `theme` above and replace it with `remote_theme` here iff you are using the 
 # `jekyll-remote-theme` plugin (which is the case when using the legacy GitHub Pages pipeline).
@@ -443,3 +443,21 @@ jekyll_compose:
       links:
         - title: Project Link
           url: https://example.com
+
+# # Comments (for future use)
+# # Set which comment system to use
+# comments:
+#   provider:            giscus
+
+# # You must install giscus github app before use.(https://github.com/apps/giscus)
+# # Make sure all variables are set properly. Check below link for detail.
+# # https://giscus.vercel.app/
+# giscus:
+#   repo:                "JaceJung-dev/JaceJung-dev.github.io"
+#   repo-id:             "R_kgDOOx3xPA"
+#   category:            "Announcements"
+#   category-id:         "DIC_kwDOOx3xPM4Cq_Hq"
+#   mapping:             "pathname"
+#   reaction-enabled:    "1"
+#   theme:               "dark_high_contrast"
+#   crossorigin:         "anonymous"
