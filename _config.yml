@@ -62,8 +62,14 @@ menu:
         url:           /dsa/
   - title:             Dev Log
     url:               /devlog/
+    submenu:
+      - title:         AInfo
+        url:           /ainfo/
   - title:             Languages
     url:               /languages/
+    submenu:
+      - title:         SQL
+        url:           /sql/
   - title:             Toolbox
     url:               /toolbox/
 # - title:             Documentation
@@ -96,7 +102,7 @@ paginate_path:         /:num/
 # ---------------------------------------------------------------------------------------
 
 # This will use the gem `jekyll-theme-hydejack`, as defined in the sibling `Gemfile`.
-# theme: jekyll-theme-hydejack
+theme: jekyll-theme-hydejack
 
 # You can uncomment `theme` above and replace it with `remote_theme` here iff you are using the 
 # `jekyll-remote-theme` plugin (which is the case when using the legacy GitHub Pages pipeline).
