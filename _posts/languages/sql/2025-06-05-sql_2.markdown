@@ -1,0 +1,97 @@
+---
+layout: post
+title:  "[SQL] 02. 기본 연산, 그룹화, 순서 정렬"
+date:   2025-06-05 23:45:00 +0900
+categories:
+    - languages
+    - sql
+    
+---
+# [SQL] 02. 기본 연산, 그룹화, 순서 정렬
+
+## 학습 내용 
+- SQL을 이용하여 기본적인 숫자 연산을 할 수 있다. 
+- 데이터를 그룹화 하고 각 그룹별로 집계함수를 적용할 수 있다. 
+- Query의 결과를 원하는 순서대로 정렬할 수 있다. 
+
+## 01. 기본 연산
+### 사칙연산
+
+| 연산자 | 설명 |
+|------|-----|
+|+     |더하기|
+|-     |빼기 |
+|*     |곱하기|
+|/     |나누기|
+
+```sql
+SELECT food_preparation_time,
+       delivery_time,
+       food_preparation_time + delivery_time AS total_time
+FROM food_orders;
+```
+### 합계와 평균
+- 합계: `SUM(칼럼명)`
+- 평균: `AVG(칼럼명)`
+
+```sql
+SELECT SUM(food_preparation_time) total_food_prep_time
+       AVG(delivery_time) avg_food_delivery_time
+FROM food_orders;
+```
+
+### 전체 데이터의 개수 구하기
+- 데이터의 개수: `COUNT(칼럼명)`  // 칼럼명 대신 `*`이나 `1` 사용 가능
+- 중복데이터를 제거하고 유일한 값만 반환: `DISTINCT`
+
+```sql
+SELECT COUNT(1) count_of_orders
+       COUNT(DISTINCT customer_id) count_of_customers
+FROM food_orders;
+```
+
+### 최댓값, 최솟값
+- 최댓값: `MAX(칼럼명)`
+- 최솟값: `MIN(칼럼명)`
+
+```sql
+SELECT MAX(price) max_price,
+       MIN(price) min_price
+FROM food_orders;
+```
+
+### 02. 그룹화
+- `GROUP BY`는 특정 컬럼을 기준으로 데이터를 그룹화하는 데 사용
+- 그룹화된 각 그룹에 대해 집계 함수(`COUNT`, `SUM`, `AVG`, `MAX`, `MIN` 등)를 적용할 수 있음.
+
+```sql
+SELECT 컬럼명1, 
+       집계함수(컬럼명2)
+FROM 테이블명
+GROUP BY 컬럼명1;
+```
+
+```sql
+SELECT cuisine_type,
+       SUM(price) sum_of_price
+FROM food_orders
+GROUP BY cuisine_type;
+```
+
+### 03. 정렬
+- SQL 쿼리의 결과를 오름차순(`ASC`) 또는 내림차순(`DESC`)으로 정렬할 때 사용
+- 일반적으로 쿼리의 마지막에 작성
+
+```sql
+SELECT column1, column2
+FROM table_name
+ORDER BY column1 [ASC|DESC], column2 [ASC|DESC];
+```
+
+```sql
+SELECT restaurant_name
+       MAX(price) "최대 주문금액"
+FROM food_orders
+GROUP BY restaurant_name
+ORDER BY MAX(price) DESC;
+```
