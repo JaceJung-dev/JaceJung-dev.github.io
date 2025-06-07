@@ -221,14 +221,14 @@ $$
 \therefore \quad x_L = x_l + \sum_{i=l}^{L-1} F(x_i)
 $$
 
-2. Transformer에서 Residual Connection
+2\. Transformer에서 Residual Connection
 
 ![https://medium.com/@achronus/exploring-residual-connections-in-transformers-2cd18b9e35eb](/img/transformer2/transformer_residual_connection.png)
 
 - Transformer는 Self-Attention, Feed-Forward Network, LayerNorm 등을 반복적으로 쌓아 구성된 매우 깊은 딥러닝 아키텍처.
 - 각 주요 구성 블록(self-attention, FFN 등) 뒤에 Residual Connection + LayerNorm 구조 사용.
 
-3. Normalization
+3\. Normalization
 - Transformer에서는 Residual Connection 뒤에 Layer Normalization을 적용함.
 - 모델이 깊어질수록 출력값의 분포가 불안정해질 수 있기 때문에, 이를 정규화하여 출력 값의 크기를 조절하고 학습을 안정화함
 - Equation
