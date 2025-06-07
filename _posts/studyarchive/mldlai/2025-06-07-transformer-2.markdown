@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Transformer 2 (Encoder)"
-date:   2025-06-07 19:00:00 +0900
+date:   2025-06-07 18:58:00 +0900
 categories:
     - studyarchive
     - mldlai
