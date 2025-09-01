@@ -72,6 +72,9 @@ menu:
         url:           /sql/
   - title:             Toolbox
     url:               /toolbox/
+    submenu:
+      - title:         PyTorch
+      - url:           /pytorch/
 # - title:             Documentation
 #   url:               /docs/
 # - title:             About
