@@ -60,6 +60,8 @@ menu:
         url:           /webdevelopment/
       - title:         Data Structure & Algorithm
         url:           /dsa/
+      - title:         Papers
+        url:           /papers/
   - title:             Dev Log
     url:               /devlog/
     submenu:
