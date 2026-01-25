@@ -1,0 +1,714 @@
+---
+layout: post
+title: "[AINFO] 챗봇 카테고리 분류 시스템과 보고서 생성 로직 구현"
+date: 2025-04-01 23:00:00 +0900
+categories:
+  - devlog
+notice: |
+  ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
+---
+
+# [AINFO] 챗봇 카테고리 분류 시스템과 보고서 생성 로직 구현
+
+## 🧭 배경
+
+이전까지 구현한 챗봇은 사용자의 모든 입력을 동일한 RAG 파이프라인으로 처리하고 있었습니다.
+정책 질문이든 일상적인 인사든, 하나의 Chroma collection에서 문서를 검색하고 동일한 체인을 통해 답변을 생성하는 구조였습니다.
+
+이러한 구조에서는
+
+- 사용자가 정책 간단한 리스트를 원하는 것인지, 특정 정책의 상세정보를 원하는 것인지, 단순 인사를 하는 것인지 구분 없이 동일한 방식으로 응답하게 되어 답변 품질이 떨어졌습니다.
+- 또한, 사용자 맞춤형 정책 보고서 생성이라는 핵심 기능을 분리하여 제공할 수 없는 한계가 있었습니다.
+- 또한, 챗룸(chatroom) 기능이 도입되면서, 기존의 WebSocket 연결 단위 메모리 관리 방식도 챗룸 단위로 변경할 필요가 생겼습니다.
+
+이에 따라 이번 작업에서는 크게 세 가지를 진행했습니다.
+
+1. **사용자 입력 카테고리 분류 시스템** 구현 (LLM 분류 + 수동 규칙 기반 보정)
+2. **CrewAI 기반 보고서 생성 로직** 연결 및 제어 시스템 구현
+3. **챗룸 단위 Redis 메모리 삭제 로직** 리팩토링
+
+## 📐 설계
+
+### 1. 카테고리 분류 시스템
+
+사용자 입력을 분석하여 적절한 답변 분기를 결정하는 분류 시스템을 설계했습니다.
+
+#### 분류 에이전트와 답변 에이전트의 분리
+
+초기에는 하나의 LLM 에이전트가 사용자 입력의 분류와 분류에 따른 적절한 Chain 실행까지 모두 담당하는 구조로 설계했습니다.
+그러나 실제 테스트에서 하나의 에이전트에 너무 많은 역할을 부여하니, 분류 자체를 제대로 수행하지 못하거나 분류 결과와 맞지 않는 Chain으로 연결되는 문제가 빈번하게 발생했습니다.
+
+이를 해결하기 위해 함수가 하나의 책임만 가져야 하듯이, 에이전트도 담당하는 업무의 범위를 줄이는 방향으로 구조를 변경했습니다.
+**분류 전용 에이전트**가 사용자 입력의 카테고리와 키워드만 판별하고, 그 결과를 받아서 **답변 생성 에이전트**(카테고리별 RAG Chain)가 실제 응답을 생성하는 파이프라인으로 분리했습니다.
+
+이렇게 역할을 분리하니 각 에이전트가 자신의 작업에만 집중할 수 있게 되어 분류 정확도와 답변 품질이 모두 개선되었습니다.
+
+#### 하이브리드 분류 구조
+
+추가로, LLM 단독 분류의 불안정성을 보완하기 위해 LLM 분류와 수동 규칙 기반 보정을 결합한 하이브리드 구조를 채택했습니다.
+
+```
+사용자 입력
+    ↓
+LLM 분류 (1차 카테고리 결정 + 키워드 추출)
+    ↓
+수동 규칙 기반 보정 (키워드/패턴 매칭 → 가중치 점수 기반 재분류)
+    ↓
+최종 카테고리 결정
+    ↓
+카테고리별 분기 처리
+    ├── OFF_TOPIC → 안내 메시지 반환
+    ├── GOV_POLICY / SUPPORT_RELATED → Overview RAG Chain (정책 리스트 collection)
+    ├── DETAIL_POLICY → Detail RAG Chain (정책 상세 collection + 웹 검색)
+    └── REPORT_REQUEST → CrewAI 보고서 생성
+```
+
+분류된 카테고리에 따라 각각 다른 Chroma collection을 retrieval하는 Chain을 실행하여 답변을 생성합니다.
+정책 개요 질문에는 `gov24_service_list` 등의 리스트성 collection을, 상세 질문에는 `gov24_service_detail` 등의 상세 collection과 Tavily 웹 검색을 병행합니다.
+
+### 2. 보고서 생성 및 제어 시스템
+
+보고서 생성은 CrewAI를 사용하되, 제어는 프론트엔드의 토글 버튼(`is_report` 플래그)으로 합니다.
+초기에는 사용자 입력을 LLM이 보고서 요청으로 분류하는 방식이었으나, 오분류가 빈번하여 UI 레벨에서 명시적으로 제어하는 구조로 변경했습니다.
+
+```
+사용자 입력 + is_report 플래그
+    ↓
+is_report == False → 일반 분류 분기 처리
+is_report == True
+    ↓
+카테고리가 OFF_TOPIC인가?
+    ├── Yes → 안내 메시지 반환
+    └── No ↓
+        사용자 credit 확인
+            ├── credit 부족 → 안내 메시지 반환
+            └── credit 차감 ↓
+                CrewAI 보고서 생성 (비동기 래핑)
+                    ↓
+                보고서 결과 반환
+```
+
+### 3. 챗룸 단위 메모리 관리
+
+기존에는 WebSocket 연결 종료(`disconnect`) 시 Redis 대화 기록을 삭제했습니다.
+챗룸이 도입되면서, 페이지 새로고침이나 일시적 연결 끊김에도 대화 기록이 유지되어야 하므로,
+삭제 시점을 **챗룸 삭제 시**로 변경했습니다.
+
+```
+기존: WebSocket disconnect → Redis 메모리 삭제
+변경: 챗룸 삭제 (perform_destroy) → Redis 메모리 삭제
+```
+
+## 🧩 구현 과정
+
+### 1. 카테고리 분류기 구현
+
+사용자 입력을 분류하기 위한 `Category` Enum과 키워드 기반 수동 분류 함수를 새로 작성했습니다.
+
+```python
+# chatbot/langchain_flow/classifier.py
+
+from enum import Enum
+
+
+class Category(Enum):
+    OFF_TOPIC = "off_topic"
+    GOV_POLICY = "gov_policy"
+    DETAIL_POLICY = "detail_policy"
+    REPORT_REQUEST = "report_request"
+    SUPPORT_RELATED = "support_related"
+
+
+# 각 카테고리에 해당하는 키워드 리스트
+KEYWORD_CATEGORY_MAP = {
+    Category.GOV_POLICY.value: [
+        "정책", "지원", "프로그램", "혜택", "주거지원", "청년지원", "복지",
+        "정부지원", "대상자", "제도", "정부정책", "복지정책", "지원정책",
+        "지원제도", "청년정책", "창업지원", "금융지원", "취업지원", "일자리",
+        "공공지원", "청년주택", "임대주택", "국가정책", "지원방안", "제도안내",
+    ],
+    Category.DETAIL_POLICY.value: [
+        "대상", "선정기준", "신청방법", "신청사이트", "신청기한", "조건",
+        "자격", "신청", "기간", "필요서류", "서류", "상세", "자세히",
+        "디테일", "절차", "증명서", "신청양식", "자세한내용", "서류제출",
+        "제출서류", "신청조건", "신청절차", "신청링크", "접수기간", "자격요건",
+        "자격조건", "신청가능일", "진행절차", "양식", "신청비용",
+        "인터넷신청", "방문신청", "신청주소", "증빙자료", "첨부파일",
+    ],
+}
+
+# 'gov_policy'로 분류할 수 있는 질문/요청 패턴 목록
+POLICY_PATTERNS = [
+    "있어?", "있나요?", "알려줘", "뭐가 있어", "어떤 것이 있",
+    "있는지", "받을 수 있", "지원받을 수", "혜택 받", "무슨 정책",
+    "정책 알려줘", "지원해주는 게", "무슨 혜택", "혜택 종류",
+    "받을 수 있는 정책", "관련된 정책", "지원 가능한 게", "추천해줘",
+]
+
+# 'detail_policy'로 분류할 수 있는 질문/요청 패턴 목록
+DETAIL_PATTERNS = [
+    "어떻게 신청", "어디서 신청", "신청 마감", "제출해야 하는",
+    "필수 서류", "구체적", "상세 내용", "자세히", "어디서 확인",
+    "언제까지 신청", "어떤 서류", "자격 요건", "자세한 정보",
+    "신청하는 법", "신청 절차", "신청 주소", "신청 링크", "필요한 서류",
+    "자세하", "상세",
+]
+
+KEYWORD_SCORE = 1
+PATTERN_SCORE = 2
+
+
+def manual_classifier(user_message: str) -> str | None:
+    scores = {Category.GOV_POLICY.value: 0, Category.DETAIL_POLICY.value: 0}
+
+    for category, keywords in KEYWORD_CATEGORY_MAP.items():
+        for keyword in keywords:
+            if keyword in user_message:
+                scores[category] += KEYWORD_SCORE
+
+    for pattern in POLICY_PATTERNS:
+        if pattern in user_message:
+            scores[Category.GOV_POLICY.value] += PATTERN_SCORE
+
+    for pattern in DETAIL_PATTERNS:
+        if pattern in user_message:
+            scores[Category.DETAIL_POLICY.value] += PATTERN_SCORE
+
+    max_score = max(scores.values())
+
+    if max_score == 0 or len(set(scores.values())) == 1:
+        return None
+
+    for category, score in scores.items():
+        if score == max_score:
+            return category
+```
+
+#### 코드 설명
+
+- `Category`: 사용자 입력의 성격을 정의하는 Enum. `OFF_TOPIC`(잡담), `GOV_POLICY`(정책 개요), `DETAIL_POLICY`(정책 상세), `REPORT_REQUEST`(보고서 요청), `SUPPORT_RELATED`(지원 관련 간접 표현)으로 분류합니다.
+- `KEYWORD_CATEGORY_MAP`: 카테고리별로 매칭할 키워드를 딕셔너리로 정의합니다.
+- `POLICY_PATTERNS` / `DETAIL_PATTERNS`: 키워드 단위가 아닌 문장 패턴 단위로 매칭하는 리스트입니다.
+- `KEYWORD_SCORE = 1`, `PATTERN_SCORE = 2`: 패턴 매칭에 더 높은 가중치를 부여합니다. 패턴은 문장 수준의 의도를 반영하므로 키워드보다 신뢰도가 높다고 판단했습니다.
+- `manual_classifier()`: 키워드와 패턴에 매칭될 때마다 해당 카테고리에 점수를 누적하고, 최고 점수 카테고리를 반환합니다. 0점이거나 동점이면 `None`을 반환하여 LLM 분류 결과를 그대로 사용합니다.
+
+### 2. LLM 분류 프롬프트 구현
+
+LLM이 사용자 입력을 1차적으로 분류하고, 키워드를 추출하는 프롬프트를 작성했습니다.
+
+```python
+# chatbot/langchain_flow/prompt.py
+
+from langchain.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder,
+    SystemMessagePromptTemplate,
+)
+
+CLASSIFICATION_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        SystemMessagePromptTemplate.from_template(
+            """
+            You are a language model that interprets and classifies Korean user input.
+
+            Your task is to:
+            1. **Classify** the user's input into one of the following categories:
+                - "off_topic": General casual conversation or input unrelated to any policy.
+                - "gov_policy": Asking about general government policies, programs, or support types.
+                - "detail_policy": Asking about specific conditions, eligibility, application process.
+                - "support_related": Indirect expressions that imply a need for support.
+
+            2. **Determine if the input is a follow-up** to a previous conversation.
+                - If the question clearly builds on a prior context, set "is_followup" to true.
+
+            3. **Summarize the context including all important keywords** from the input and chat history.
+                - Return can be used for document search or web queries.
+                - Do not translate to English.
+
+            Return the result in the following JSON format:
+                "category": "<category (off_topic | gov_policy | policy_detail | support_related>",
+                "original_input": "<사용자의 원본 입력>",
+                "is_followup": <true | false>,
+                "keywords": <summary>
+            """.strip()
+        ),
+        MessagesPlaceholder(variable_name="chat_history"),
+        HumanMessagePromptTemplate.from_template("Question: {question}"),
+    ]
+)
+```
+
+#### 코드 설명
+
+- LLM에게 분류, 후속 질문 판별, 키워드 요약 세 가지 작업을 동시에 수행하도록 지시합니다.
+- `MessagesPlaceholder("chat_history")`를 포함하여, 이전 대화 맥락을 기반으로 후속 질문(`is_followup`)을 판별할 수 있습니다.
+- 결과는 JSON 형태로 반환받아 `JsonOutputParser`로 파싱합니다.
+- `keywords`는 초기에는 키워드 리스트(`["청년", "창업"]`)였으나, 검색 품질 향상을 위해 요약 문장(`"청년을 위한 창업 관련 지원금"`)으로 변경했습니다.
+
+### 3. 사용자 프로필 기반 키워드 추출
+
+사용자 맞춤형 정책 추천을 위해, User 모델에서 프로필 정보를 조회하고 키워드를 추출하는 함수를 구현했습니다.
+
+```python
+# chatbot/langchain_flow/profile.py
+
+from channels.db import database_sync_to_async
+from accounts.models import User
+
+
+@database_sync_to_async
+def get_profile_data(user_id: int) -> dict:
+    user = User.objects.get(pk=user_id)
+
+    education_level = user.education_level
+    current_status = user.current_status
+    location = user.location
+    region = location.region if location else None
+
+    interests = user.interests.all()
+    interest_list = [interest.name for interest in interests]
+
+    keywords = []
+    profile = {}
+
+    keywords += interest_list
+    profile["interests"] = interest_list
+
+    if education_level:
+        keywords.append(education_level.name)
+        profile["education_level"] = education_level.name
+
+    if current_status:
+        keywords.append(current_status.name)
+        profile["current_status"] = current_status.name
+
+    if location:
+        keywords.append(location.name)
+        profile["location"] = location.name
+
+    if region:
+        keywords.append(region.name)
+        profile["region"] = region.name
+
+    return {"keywords": keywords, "profile": profile}
+```
+
+#### 코드 설명
+
+- `@database_sync_to_async`: Django ORM은 동기적으로 동작하므로, 비동기 컨텍스트에서 호출하기 위해 channels의 데코레이터를 사용합니다.
+- User 모델에서 학력(`education_level`), 현재 상태(`current_status`), 관심사(`interests`), 거주지(`location`), 지역(`region`)을 조회합니다.
+- `keywords`: 검색 쿼리 보강에 사용할 키워드 리스트를 생성합니다.
+- `profile`: 보고서 생성 시 사용자 맥락으로 전달할 정형화된 딕셔너리를 구성합니다.
+
+### 4. 카테고리별 RAG 체인 구현
+
+분류 결과에 따라 실행할 두 가지 RAG 체인을 구현했습니다.
+
+#### Overview Chain (정책 개요)
+
+```python
+# chatbot/langchain_flow/chains/overview_rag_chain.py
+
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableMap
+from langchain_openai import ChatOpenAI
+
+from chatbot.langchain_flow.prompts.overview_rag_prompt import OVERVIEW_RAG_PROMPT
+from chatbot.langchain_flow.tools.overview_rag_tool import overview_rag_tool
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5, streaming=True)
+
+OVERVIEW_CHAIN = (
+    RunnableMap(
+        {
+            "question": lambda x: x["question"],
+            "context": lambda x: overview_rag_tool.run(
+                {"query": " ".join(x["keywords"])}
+            ),
+            "chat_history": lambda x: x.get("chat_history", []),
+        }
+    )
+    | OVERVIEW_RAG_PROMPT
+    | llm
+    | StrOutputParser()
+)
+```
+
+#### Detail Chain (정책 상세)
+
+```python
+# chatbot/langchain_flow/chains/detail_rag_chain.py
+
+from chatbot.langchain_flow.prompts.detail_rag_prompt import DETAIL_RAG_PROMPT
+from chatbot.langchain_flow.tools.detail_rag_tool import detail_rag_tool
+from chatbot.langchain_flow.tools.tavily_web_tool import tavily_web_search_tool
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5, streaming=True)
+
+DETAIL_CHAIN = (
+    RunnableMap(
+        {
+            "question": lambda x: x["question"],
+            "context": lambda x: detail_rag_tool.run(
+                {"query": " ".join(x["keywords"])}
+            ),
+            "web_search": lambda x: tavily_web_search_tool.invoke(
+                {
+                    "query": " ".join(x["keywords"]),
+                    "k": x.get("k", 4),
+                }
+            ),
+            "current_year_month": lambda _: current_year_month,
+            "chat_history": lambda x: x.get("chat_history", []),
+        }
+    )
+    | DETAIL_RAG_PROMPT
+    | llm
+    | StrOutputParser()
+)
+```
+
+#### 코드 설명
+
+- 두 체인 모두 `RunnableMap`으로 입력을 구성하고, 프롬프트 → LLM → 파서로 이어지는 LCEL 체인입니다.
+- **Overview Chain**: `overview_rag_tool`로 `gov24_service_list`, `youth_policy_list` 등 리스트성 collection에서 검색합니다.
+- **Detail Chain**: `detail_rag_tool`로 `gov24_service_detail` 등 상세 collection에서 검색하면서, `tavily_web_search_tool`로 최신 웹 검색 결과도 병행합니다.
+- Detail Chain에는 `current_year_month`를 전달하여 신청 기간이 지난 정책을 필터링합니다.
+
+### 5. 챗봇 응답 메인 로직 구현
+
+분류 → 보정 → 분기 → 체인 실행의 전체 흐름을 `get_chatbot_response`에 구현했습니다.
+기존의 단일 RAG 체인 실행 로직을 분류 기반 분기 구조로 전면 재작성했습니다.
+
+```python
+# chatbot/langchain_flow/run.py
+
+async def get_chatbot_response(
+    user_message: str, user_id: str, room_id: str, is_report: bool
+):
+    # 멀티턴을 위한 레디스 메모리 매니저 인스턴스 생성
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=True)
+    chat_manager = ChatHistoryManager(user_id, room_id, llm)
+    memory = chat_manager.get_memory_manager()
+    chat_history = memory.load_memory_variables({}).get("chat_history", [])
+
+    # 1차: LLM이 사용자 입력을 분류하고 키워드 추출
+    classification_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+    classification_chain = (
+        CLASSIFICATION_PROMPT | classification_llm | JsonOutputParser()
+    )
+    classification_result = await classification_chain.ainvoke(
+        {"question": user_message, "chat_history": chat_history}
+    )
+
+    # 2차: 수동 규칙 기반 보정
+    manual_category = manual_classifier(user_message)
+
+    if (
+        classification_result["is_followup"]
+        and manual_category == Category.DETAIL_POLICY.value
+    ):
+        classification_result["category"] = Category.DETAIL_POLICY.value
+    elif manual_category and manual_category != classification_result["category"]:
+        classification_result["category"] = manual_category
+
+    category = classification_result["category"]
+
+    # 유저 프로필 정보 및 키워드 추출
+    profile_data = await get_profile_data(int(user_id))
+    profile = profile_data["profile"]
+    llm_keywords = classification_result.get("keywords")
+
+    # 사용자 입력에 따른 분기 처리
+    if not is_report:
+        if category == Category.OFF_TOPIC.value:
+            yield "정책 및 지원에 관한 내용을 물어봐주시면 친절하게 답변해드릴 수 있습니다."
+            return
+        elif category in [Category.GOV_POLICY.value, Category.SUPPORT_RELATED.value]:
+            chain = OVERVIEW_CHAIN
+        elif category == Category.DETAIL_POLICY.value:
+            chain = DETAIL_CHAIN
+        else:
+            yield "죄송합니다. 질문을 정확히 이해하지 못했습니다. 다시 한번 질문해주실 수 있을까요?"
+    else:
+        if category != Category.OFF_TOPIC.value:
+            try:
+                await check_and_deduct_credit(int(user_id))
+            except User.DoesNotExist:
+                yield "사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요."
+                return
+            except ValueError as e:
+                yield str(e)
+                return
+
+            user_input = {
+                "original_input": user_message,
+                "summary": llm_keywords + "의 키워드를 중심으로 보고서 만들어줘",
+                "keywords": llm_keywords,
+                "user_profile": profile,
+            }
+            flow_result = await run_policy_flow_async(user_input)
+            report_result = (
+                flow_result.raw if hasattr(flow_result, "raw") else str(flow_result)
+            )
+            yield report_result
+            return
+        else:
+            yield "정책 및 지원에 관한 내용을 물어봐주시면 친절하게 답변해드릴 수 있습니다."
+            return
+
+    # 스트리밍 실행
+    output_response = ""
+    async for chunk in chain.astream(
+        {
+            "question": classification_result["original_input"],
+            "keywords": llm_keywords,
+            "chat_history": chat_history,
+            "profile": profile,
+        }
+    ):
+        output_response += chunk
+        yield chunk
+
+    # 멀티턴 메모리에 저장
+    memory.save_context({"human": user_message}, {"ai": output_response})
+```
+
+#### 코드 설명
+
+| 단계        | 설명                                                                                                                          |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 메모리 로드 | `ChatHistoryManager`로 Redis에서 이전 대화 기록을 불러옵니다.                                                                 |
+| 1차 분류    | `CLASSIFICATION_PROMPT`와 `JsonOutputParser`를 체인으로 연결하여 LLM이 카테고리, 키워드, 후속 여부를 JSON으로 반환합니다.     |
+| 2차 보정    | `manual_classifier`로 키워드/패턴 기반 재분류. 후속 질문이면서 수동 분류가 `DETAIL_POLICY`인 경우 우선 적용합니다.            |
+| 분기 처리   | `is_report` 플래그에 따라 일반 응답과 보고서 생성을 분리합니다. 일반 응답은 카테고리별 Chain을, 보고서는 CrewAI를 실행합니다. |
+| 스트리밍    | `chain.astream()`으로 토큰 단위 스트리밍하면서 `output_response`에 누적 후 `save_context`로 메모리에 저장합니다.              |
+
+### 6. CrewAI 보고서 생성 비동기 래핑
+
+CrewAI는 비동기를 자체 지원하지 않으므로, `ThreadPoolExecutor`를 사용한 래핑 함수를 구현했습니다.
+
+```python
+# chatbot/langchain_flow/run.py
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from chatbot.crew_wrapper.flows.policy_flow import PolicyFlow
+
+
+async def run_policy_flow_async(user_input: dict):
+    """
+    동기 함수인 정책 보고서 생성 플로우(PolicyFlow)를 비동기적으로 실행하는 함수
+
+    동기(sync) 함수는 await할 수 없기 때문에, ThreadPoolExecutor를 사용해
+    동기 코드를 백그라운드 스레드에서 실행하고,
+    asyncio의 run_in_executor를 통해 비동기 함수처럼 동작하도록 만들어줍니다.
+    """
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        return await loop.run_in_executor(
+            executor, lambda: PolicyFlow(user_input).kickoff()
+        )
+```
+
+#### 코드 설명
+
+- `asyncio.get_event_loop()` + `run_in_executor()`: 이벤트 루프를 블로킹하지 않고 동기 함수를 별도 스레드에서 실행합니다.
+- `PolicyFlow(user_input).kickoff()`: CrewAI의 동기 실행 메서드를 호출합니다.
+- 이를 통해 비동기 WebSocket Consumer → 비동기 `get_chatbot_response` → 동기 CrewAI 실행이 자연스럽게 연결됩니다.
+
+### 7. Credit 확인 및 차감 로직
+
+보고서 작성에는 비용이 발생하므로, 사용자의 credit을 확인하고 차감하는 함수를 구현했습니다.
+
+```python
+# chatbot/langchain_flow/run.py
+
+from channels.db import database_sync_to_async
+from django.db import transaction
+from accounts.models import User
+
+
+@database_sync_to_async
+def check_and_deduct_credit(user_id: int, cost: int = 50) -> User:
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(id=user_id)
+
+        if user.credit < cost:
+            raise ValueError("보고서를 생성하려면 최소 50 크레딧이 필요합니다.")
+
+        user.credit -= cost
+        user.save()
+        return user
+```
+
+#### 코드 설명
+
+- `@database_sync_to_async`: 비동기 컨텍스트에서 Django ORM을 호출하기 위한 데코레이터입니다.
+- `transaction.atomic()` + `select_for_update()`: 동시 요청에서 credit 차감이 중복되지 않도록 행 수준 잠금(row-level lock)을 사용합니다.
+- credit이 부족하면 `ValueError`를 발생시키고, 호출부에서 이를 캐치하여 사용자에게 안내 메시지를 반환합니다.
+
+### 8. Consumer 변경 - `is_report` 플래그 수신
+
+프론트엔드에서 보고서 작성 여부를 제어하기 위해 Consumer에 `is_report` 플래그 수신 로직을 추가했습니다.
+
+```python
+# 기존 - consumers.py receive()
+data = json.loads(text_data)
+user_message = data["message"]
+
+async for chunk in get_chatbot_response(
+    user_message, self.user_id, self.room_id
+):
+```
+
+```python
+# 변경 - consumers.py receive()
+data = json.loads(text_data)
+user_message = data["message"]
+is_report = data.get("is_report", False)  # 보고서 작성 여부 플래그 추가
+
+async for chunk in get_chatbot_response(
+    user_message,
+    self.user_id,
+    self.room_id,
+    is_report,  # 플래그 전달
+):
+```
+
+- 프론트엔드에서 전송하는 JSON에 `is_report` 필드를 추가하고, `get_chatbot_response`에 전달합니다.
+- 기본값은 `False`로, 기존 동작과 하위 호환됩니다.
+
+### 9. 보고서 토글 버그 수정
+
+보고서 제어 시스템 구현 직후, 보고서 토글을 켠 상태에서 정책과 관련 없는 일반 질문을 입력해도 보고서가 작성되는 버그가 발생했습니다.
+
+```python
+# 기존 - run.py (버그 코드)
+category = classification_result["category"]
+
+if is_report:
+    category = Category.REPORT_REQUEST.value  # is_report가 True이면 무조건 보고서 카테고리로 변경
+
+# 사용자 입력에 따른 분기 처리
+if category == Category.OFF_TOPIC.value:
+    yield "정책 및 지원에 관한 내용을 물어봐주시면..."
+    return
+elif category == Category.REPORT_REQUEST.value:
+    # 보고서 생성 로직...
+```
+
+```python
+# 변경 - run.py (수정 코드)
+category = classification_result["category"]
+
+# 사용자 입력에 따른 분기 처리
+if not is_report:
+    if category == Category.OFF_TOPIC.value:
+        yield "정책 및 지원에 관한 내용을 물어봐주시면..."
+        return
+    elif category in [Category.GOV_POLICY.value, Category.SUPPORT_RELATED.value]:
+        chain = OVERVIEW_CHAIN
+    elif category == Category.DETAIL_POLICY.value:
+        chain = DETAIL_CHAIN
+    else:
+        yield "죄송합니다..."
+else:
+    if category != Category.OFF_TOPIC.value:  # OFF_TOPIC이 아닌 경우에만 보고서 생성
+        # credit 확인 & 보고서 생성 로직...
+    else:
+        yield "정책 및 지원에 관한 내용을 물어봐주시면..."
+        return
+```
+
+- **원인**: `is_report`가 `True`이면 LLM이 분류한 카테고리를 무조건 `REPORT_REQUEST`로 덮어쓰고 있었습니다. 그래서 "안녕하세요"처럼 `OFF_TOPIC`으로 분류되어야 할 입력도 보고서 생성으로 진입했습니다.
+- **수정**: `is_report` 플래그와 LLM 카테고리 분류를 독립적으로 유지합니다. `is_report`가 `True`여도 카테고리가 `OFF_TOPIC`이면 보고서를 생성하지 않고 안내 메시지를 반환합니다.
+
+### 10. 챗룸 단위 Redis 메모리 삭제 리팩토링
+
+#### 기존 - Consumer disconnect에서 삭제
+
+```python
+# chatbot/consumers.py
+async def disconnect(self, close_code):
+    if self.is_authenticated:
+        chat_history_manager = ChatHistoryManager(
+            self.user_id, self.room_id, model=None
+        )
+        chat_history_manager.clear_history()
+
+    await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+```
+
+#### 변경 - 챗룸 삭제 View에서 삭제
+
+```python
+# chatbot/consumers.py
+async def disconnect(self, close_code):
+    # 메모리 삭제 로직 제거
+    await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+```
+
+```python
+# chatbot/views.py
+
+from chatbot.langchain_flow.memory import ChatHistoryManager
+
+
+class ChatRoomDetailView(generics.RetrieveUpdateDestroyAPIView):
+    ...
+
+    def perform_destroy(self, instance):
+        """채팅방 삭제 시 Redis의 해당 채팅방 기록도 함께 삭제"""
+        chat_history_manager = ChatHistoryManager(
+            user_id=str(self.request.user.id),
+            room_id=str(instance.id),
+            model=None
+        )
+        chat_history_manager.clear_history()
+
+        instance.delete()
+```
+
+- `consumers.py`의 `disconnect()`에서 `ChatHistoryManager` import와 메모리 삭제 로직을 제거했습니다.
+- `views.py`의 `ChatRoomDetailView`에 `perform_destroy`를 오버라이드하여, 챗룸 DB 삭제 전에 Redis 대화 기록을 먼저 삭제합니다.
+- `model=None`: 대화 기록 삭제 시에는 요약 기능이 필요 없으므로 LLM 모델을 전달하지 않습니다.
+
+## 🔄 마무리
+
+### 구현 성과
+
+이번 작업을 통해 AINFO 챗봇의 응답 구조를 크게 개선했습니다.
+
+- **카테고리 분류 시스템**을 통해 사용자 의도에 맞는 적절한 답변 분기가 가능해졌습니다. LLM 분류와 수동 규칙 기반 보정의 이중 구조로 분류 정확도를 높였습니다.
+- **CrewAI 기반 보고서 생성**을 챗봇 파이프라인에 통합하여, 사용자 맞춤형 정책 보고서를 제공할 수 있게 되었습니다.
+- **보고서 제어 시스템**을 프론트엔드 토글 + credit 차감 방식으로 구현하여, 의도치 않은 보고서 생성을 방지하고 비용 관리 구조를 마련했습니다.
+- **챗룸 단위 메모리 관리**로 전환하여, 연결 끊김에 관계없이 대화 기록이 유지되는 안정적인 구조를 갖추었습니다.
+
+### 회고
+
+이번 구현에서 가장 많은 시간과 노력을 쏟았던 것은 다양한 유저 시나리오를 상상하고, 그 시나리오들에 잘 대처할 수 있는 로직을 고민하는 과정이었습니다.
+덕분에 문제를 나름대로 정의해서 내 기준과 방식으로 하나씩 해결해나가는 값진 경험을 할 수 있었습니다.
+
+처음에는 프롬프트만 잘 작성하면 LLM이 만능으로 사용자의 입력을 분류하고, 그에 맞는 파이프라인을 알아서 잘 탈 수 있을 것이라 생각했습니다.
+그런데 실제로 테스트해보니 분류가 자꾸 어긋나고, 맞는 파이프라인을 선택하지 못하는 경우가 계속 생겼습니다.
+이에 입력 분류, 분류에 따른 서로 다른 파이프라인 적용을 하나의 LLM에서 처리하면서 과부하가 생겼을 것이라는 생각이 들었습니다. 따라서, 함수에 하나의 책임만 부여하듯이 LLM에게도 업무 단위를 적당한 크기로 나눠주는 것을 적용하게 되었습니다.
+사용자 입력 분류와 답변 생성을 별도의 에이전트로 분리했고, 답변 생성 과정에서 파이프라인을 선택하는 것도 LLM에게 맡기기보다 조건문으로 명확하게 분기하는 방식을 택했습니다.
+이렇게 구조를 바꾸고 나니 분류 정확도와 답변 품질이 눈에 띄게 좋아져서 뿌듯했던 기억이 있습니다.
+
+사용자 입력 분류 기능을 구현하면서도 비슷한 상황이 있었습니다. LLM만으로 분류하면 충분할 것이라 생각했는데, 의외로 한국인으로서 당연하게 느껴지는 뉘앙스를 LLM이 잘 잡아내지 못했습니다.
+명확하고 간단한 문장인데도 카테고리를 틀리는 경우가 있었고, 이건 프롬프트를 아무리 고쳐도 완전히 해결되지 않았습니다.
+그래서 사람이 개입할 수 있는 방법을 고민하게 되었고, 키워드와 패턴에 가중치를 부여하는 규칙 기반 분류를 추가해서 LLM 분류와 결합하는 하이브리드 구조로 해결했습니다.
+LLM이 놓치는 부분을 사람이 정의한 규칙이 잡아주는 이 구조가 실제로 잘 동작하는 것을 보면서 LLM이 사람보다 똑똑하고 뛰어난 면도 있지만, 아직은 인간만이 가질 수 있는 정교함이 있다는 것을 느낄 수 있었습니다.
+
+또한 이번 구현은 처음부터 직접 만들거나, 간단한 것에 내용을 추가하는 것이 아니었습니다.
+팀원이 구현한 CrewAI 기반 보고서 오케스트레이션, 챗룸, 결제 시스템, 그리고 기존에 작성된 챗봇 로직 위에 나의 기능을 얹는 작업이었습니다.
+다른 사람의 코드를 읽고 흐름을 따라가는 것 자체가 쉽지 않았는데, 하나씩 파악하고 나서 그걸 내 파이프라인에 연결했을 때 제대로 동작하는 걸 보니 뿌듯했습니다.
+혼자서 처음부터 만드는 것과는 또 다른 재미가 있었습니다.
+
+### 개선 방향
+
+- **에이전트 모델 다양화**: 모든 에이전트가 동일한 GPT 모델을 사용하고 있는데, 분류와 같은 단순 작업에는 오픈소스 모델을 적용하여 비용과 응답 시간을 절감
+- **LangGraph 도입 검토**: 현재 조건문 기반으로 처리하고 있는 파이프라인 분기 로직을 LangGraph로 전환하여, 복잡한 흐름을 더 구조적으로 관리
+- **분류 정확도 향상**: 수동 분류 함수의 키워드와 가중치를 실제 사용 데이터를 기반으로 지속적으로 튜닝

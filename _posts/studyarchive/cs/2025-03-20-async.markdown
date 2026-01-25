@@ -1,0 +1,191 @@
+---
+layout: post
+title: "비동기 (Asynchronous) 처리"
+date: 2025-03-20 22:00:00 +0900
+categories:
+  - studyarchive
+  - cs
+notice: |
+  ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
+---
+
+# 비동기 (Asynchronous) 처리
+
+## 1. 개념
+
+### 동기(Synchronous) 처리
+
+- 동기 처리는 작업(Task)을 순차적으로 실행하는 방식
+- 한 작업이 완료될 때까지 다음 작업은 대기함
+
+### 비동기(Asynchronous) 처리
+
+- 비동기 처리는 여러 작업들(Tasks)을 동시에 처리할 수 있는 방식
+- 한 작업이 시작되면 그 작업이 끝나기를 기다리지 않고 다음 작업을 시작할 수 있음
+- 비동기 프로그래밍은 일반적으로 이벤트 기반(event-driven)이나 콜백(callback) 기반으로 구현
+- 최근에는 `async`/`await` 문법을 활용한 코루틴 기반의 비동기 프로그래밍도 많이 사용
+
+## 2. 동기(Synchronous) vs 비동기(Asynchronous)
+
+| 구분             | 동기 처리 (Synchronous)                  | 비동기 처리 (Asynchronous)               |
+| ---------------- | ---------------------------------------- | ---------------------------------------- |
+| 작업 흐름        | 하나의 작업이 끝날 때까지 다음 작업 대기 | 작업 완료를 기다리지 않고 다음 작업 수행 |
+| 처리 특성        | 앞선 작업 지연 시 전체 흐름이 차단됨     | 대기 시간 동안 다른 작업 처리 가능       |
+| 성능 영향        | 처리 시간이 길어질수록 병목 발생         | I/O 대기 시간을 효율적으로 활용          |
+| 확장성           | 요청 수 증가 시 확장성 저하              | I/O 작업이 많거나 동시 요청 처리에 유리  |
+| 적합한 사용 사례 | 단순 연산, 순차 처리가 중요한 로직       | WebSocket, 네트워크, DB 등 I/O 중심 작업 |
+| 실시간 서비스    | ❌ 부적합                                | ✅ 필수적인 구조                         |
+
+## 3. Blocking vs Non-Blocking
+
+비동기 처리를 이해하기 위해서는 Blocking / Non-Blocking 개념을 먼저 구분할 필요가 있음
+
+### Blocking
+
+- 작업이 완료될 때까지 제어권을 반환하지 않음
+- 호출한 쪽은 결과가 나올 때까지 대기 상태에 머무름
+- 하나의 작업 지연이 전체 흐름에 영향을 미침
+
+### Non-Blocking
+
+- 작업을 요청한 후 즉시 제어권을 반환
+- 결과는 나중에 처리됨
+- 대기 시간 동안 다른 작업 수행 가능
+
+> Non-Blocking은 “즉시 반환”의 개념이고, 비동기는 “작업 완료를 기다리지 않고 다른 작업을 진행”하는 구조이다.  
+> 두 개념은 밀접하지만 동일하지는 않다.
+
+## 4. Coroutine(코루틴)
+
+![coroutine](/img/cs/coroutines.png)
+
+_출처: https://blog.eiler.eu/posts/20210512/_
+
+### 개념
+
+- Coroutine은 실행을 중단하고 다시 이어서 실행할 수 있는 함수
+  - 일반 함수: 호출 -> 끝까지 실행
+  - 코루틴: 실행 -> 중단 -> 재개 가능
+
+### Coroutine 객체와 `async def`
+
+- `async def`로 정의된 함수는 즉시 실행되지 않음
+- 호출 시 coroutine 객체를 반환
+
+```python
+async def fetch_data():
+    return "data"
+
+coro = fetch_data()
+print(coro)  # <coroutine object ...>
+```
+
+### 실행 중단과 `await`
+
+- `await`은 코루틴의 실행을 일시 중단
+- 제어권을 호출자(이벤트 루프)에게 반환
+- 이후 다시 이어서 실행 가능
+
+```python
+async def fetch_data():
+    return "data"
+
+async def main():
+    data = await fetch_data()
+    print(data)
+```
+
+## 5. 이벤트 루프(Event Loop) 기반 비동기 처리
+
+파이썬의 비동기 처리는 이벤트 루프(Event Loop) 를 중심으로 동작
+
+### 이벤트 루프(Event Loop)란?
+
+이벤트 루프는 비동기 프로그램에서 **실행 가능한 작업들을 관리하고 스케줄링하는 중앙 제어 구조**
+
+- 실행 가능한 coroutine을 선택하여 실행한다
+- 코-루틴이 `await` 지점에 도달하면 실행을 중단하고 제어권을 회수한다
+- 대기 중인 작업의 완료를 감지하면, 해당 coroutine을 다시 실행 큐에 등록한다
+- 이러한 과정을 반복하며 여러 비동기 작업을 효율적으로 교차 실행한다
+
+이벤트 루프는 다음과 같은 역할을 수행한다.
+
+- coroutine 실행 및 중단
+- I/O 작업 완료 감지
+- 다음 실행 가능한 작업 선택
+
+### 이벤트 루프(Event Loop)의 실행 흐름
+
+- 비동기 함수 호출 → coroutine 객체 생성
+- 이벤트 루프에 등록
+- 실행 중 await 만나면 일시 중단
+- 다른 coroutine 실행
+- 대기 작업 완료 시 다시 재개
+
+## 6. 파이썬 asyncio 기반 비동기 처리 구현
+
+- `asyncio`는 파이썬에서 **이벤트 루프 기반 비동기 프로그래밍을 지원하는 표준 라이브러리**.
+- `asyncio`는 다음과 같은 핵심 요소들을 제공한다.
+  - 이벤트 루프(Event Loop)
+  - 코루틴(Coroutine) 실행 및 관리
+  - 비동기 I/O 유틸리티
+  - 여러 비동기 작업의 병행 실행 도구
+
+### 이벤트 루프 실행 진입점 `asyncio.run()`
+
+- `asyncio.run()`은 비동기 프로그램의 **진입점(entry point)** 역할
+  - 이벤트 루프를 생성하고 실행
+  - 전달된 최상위 coroutine을 실행
+  - 실행 완료 후 이벤트 루프를 정리하고 종료
+
+```python
+import asyncio
+
+async def main():
+    print("start")
+    await asyncio.sleep(1)
+    print("end")
+
+asyncio.run(main())
+```
+
+### 비동기 대기 `asyncio.sleep`
+
+- `asyncio.sleep()`은 비동기 환경에서의 대기 함수
+- time.sleep()과 달리 이벤트 루프를 블로킹하지 않음
+- 대기 중 제어권을 이벤트 루프에 반환
+
+```python
+async def task():
+    await asyncio.sleep(2)
+    print("done")
+```
+
+### 여러 비동기 작업 병행 실행 `asyncio.gather`
+
+- `asyncio.gather()`는 여러 coroutine을 동시에 실행하고, 모든 작업이 완료될 때까지 대기함
+
+```python
+async def task(name):
+    await asyncio.sleep(1)
+    print(f"{name} done")
+
+async def main():
+    await asyncio.gather(
+        task("A"),
+        task("B"),
+        task("C")
+    )
+
+asyncio.run(main())
+```
+
+## 7. 정리
+
+- 비동기 처리는 작업의 완료를 기다리지 않고 다음 작업을 진행할 수 있는 실행 구조
+- 파이썬의 비동기 모델은 **코루틴(Coroutine)** 과 **이벤트 루프(Event Loop)** 를 중심으로 동작
+- `async def`로 정의된 비동기 함수는 호출 즉시 실행되지 않고 coroutine 객체를 반환
+- 실제 실행과 스케줄링은 이벤트 루프가 담당
+- 실행 흐름은 `await` 지점에서만 일시 중단되며, 이때 다른 비동기 작업으로 전환됨
+- 이러한 구조는 네트워크, 데이터베이스, WebSocket과 같은 **I/O 중심 작업**에 특히 적합
+- `async`, `await`, `asyncio`는 파이썬에서 비동기 처리를 구현하기 위한 핵심 구문

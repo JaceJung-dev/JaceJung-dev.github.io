@@ -1,0 +1,300 @@
+---
+layout: post
+title: "[AINFO] Django Channels를 활용한 비동기 실시간 통신 설계와 구현 (WebSocket)"
+date: 2025-03-28 22:00:00 +0900
+categories:
+  - devlog
+notice: |
+  ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
+---
+
+# [AINFO] Django Channels를 활용한 비동기 실시간 통신 설계와 구현 (WebSocket)
+
+## 📌 관련 개념 정리
+
+**관련된 기술에 대한 개념적 정리는 아래 포스트를 참고해주세요.**
+
+- [비동기 (Asynchronous) 처리](/studyarchive/cs/2025-03-20-async)
+- [WebSocket, Gateway Interface, Channel Layer](/studyarchive/cs/2025-03-21-websocket)
+
+## 🧭 배경
+
+AINFO는 사용자의 질의에 따라 공공서비스 정보를 실시간으로 검색⋅응답하는 AI챗봇 서비스입니다.
+
+초기에는 일반적인 HTTP 요청-응답 구조를 고려했지만, 다음과 같은 한계가 존재했습니다.
+
+- 사용자가 메시지를 보낼 때마다 매번 새로운 HTTP 요청을 해야함
+- 서버의 응답 생성(LLM 호출)동안 클라이언트는 대기 상태
+- 실시간 대화 UX 구현에 polling / long-polling의 방식은 비효율적
+
+챗봇 서비스는 대화의 흐름이 연속적으로 이어져야 하기 때문에, 지속적인 연결 상태에서 양방향으로 데이터를 주고받을 수 있는 WebSocket이 필수적이었습니다.
+
+## ⚙️ 기술적 의사결정 - `Django Channels` + `Daphne`
+
+AINFO 프로젝트는 이미 Django REST framework(DRF)를 기반의 백엔드 구조를 갖추고 있었습니다.
+따라서, WebSocket 도입 시에도 기존 Django 생태계를 최대한 유지하는 것이 중요한 판단 기준이었습니다.
+
+### Django Channels
+
+`Django Channels`는 Django의 WSGI 기반 환경을 ASGI(Asynchronous Server Gateway Interface)환경으로 확장하여,
+
+- HTTP 요청
+- WebSocket 연결 및 기타 비동기 프로토콜  
+  을 하나의 애플리케이션에서 동시에 처리할 수 있도록 합니다.
+  또한, `Django Channels`를 사용함으로써
+- Django ORM, 인증, 세션 미들웨어를 그대로 활용 가능
+- DRF 기반 기존 REST API 구조와 자연스럽게 공존
+- WebSocket 처리를 Django 내부 개념(consumer)으로 추상화
+  를 할 수 있다는 이점이 있습니다.
+
+### Daphne (asgi server)
+
+ASGI 환경에서는 `Uvicorn`, `Daphne` 등 여러 서버 선택지가 존재합니다.
+웹 자료에서는 `Uvicorn`이 자주 언급되지만, 본 프로젝트에서는 `Daphne`를 선택했습니다.
+`Daphne`를 선택한 이유는,
+
+- `Daphne`는 `Django Channels`의 공식 문서에서 권장하는 ASGI 서버
+- `Django Channels` 프로젝트와 동일한 생태계에서 함께 유지·관리되는 공식 구성요소
+- WebSocket 처리에 특화된 안정적인 동작
+  으로 "가장 빠른 서버", "가장 많이 사용되는 서버"보다 일관된 개발 환경과 안정적인 동작을 우선했습니다.
+
+## 🧩 구현 과정 – WebSocket 챗봇
+
+### 1. settings 및 channel layer (Redis) 설정
+
+```python
+# config/settings.py
+
+# application definition
+INSTALLED_APPS = [
+
+    # Third-party apps
+    "daphne",
+    "channels",
+    "django.contrib.sites",
+    "django.contrib.admin",
+    "django.contrib.auth",
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
+
+REDIS_HOST = env("REDIS_HOST", default="127.0.0.1")
+REDIS_PORT = env.int("REDIS_PORT", default=6379)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(REDIS_HOST, REDIS_PORT)],
+        },
+    },
+}
+
+```
+
+- Django 설정의 `INSTALLED_APPS`에서 `Daphne`를 최상단에 둡니다.
+  - 개발 환경에서 Django의 runserver를 Daphne 기반으로 ASGI 서버로 대체하기 위함입니다.
+  - 운영에서는 runserver가 아니라 `daphne`을 직접 띄우므로 해당 설정은 개발 편의성을 위한 것입니다.
+- `Redis` 설정인 `REDIS_HOST`와 `REDIS_PORT`는 `.env`에 넣고, `django-environ`으로 load하는 방식으로 하였습니다.
+- `ASGI_APPLICATION = "config.asgi.application"` 추가합니다.
+
+```bash
+docker run --rm -d -p 6379:6379 --name redis-server redis
+```
+
+- 해당 커맨드를 터미널에 치면, `docker`가 알아서 최신 `Redis`의 `image`를 가져와서 `container`까지 만들어서 실행합니다.
+  - `run` : image pull해서 container까지 만들어서 바로 실행
+  - `-d` : 백그라운드 실행
+  - `-p 6379:6379` : 포트설정
+  - `—-rm` : 컨테이너를 종료하면 자동 삭제
+  - `—name` : 컨테이너 이름 설정 (redis-server로 설정함)
+
+### 2. chatbot 구현
+
+```python
+from langchain.schema.runnable import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
+
+from .prompt import chatbot_prompt
+from .retriever import vectorretriever
+
+# 리트리버 인스턴스 생성 (싱글톤으로 구현된 리트리버에 맞춰 전역 변수로 생성)
+vector_retriever = vectorretriever()
+retriever = vector_retriever.get_retriever()
+
+
+def get_chatbot_response(user_message):
+    """
+    - 사용자의 입력을 받아 llm을 실행하고, 단일 응답만 반환 (싱글턴, 대화 기록 저장 x)
+    - temperature=0.3: 창의성보다 정확도에 중점을 둠. (추후 조정 가능)
+    """
+
+    # 사용자 질문을 기반으로 문서 검색
+    retrieved_docs = retriever.invoke(user_message)
+
+    # 디버깅: 검색된 문서가 있는지 확인
+    if not retrieved_docs:
+        print("검색된 문서가 없습니다.")
+    else:
+        pass
+
+    # 검색된 문서를 문자열로 변환
+    retrieved_context = vector_retriever.format_docs(retrieved_docs)
+
+    # rag 검색 결과가 없으면 기본 context 사용
+    if retrieved_context is None:
+        retrieved_context = "정부의 지원 정책"
+
+    # llm 실행 (chatbot_prompt는 utils1.py에서 import)
+    llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.3)
+
+    prompt = chatbot_prompt
+
+    rag_chain = (
+        {"context": lambda _: retrieved_context, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    response = rag_chain.invoke(user_message)
+
+    return {
+        "response": response,
+        "retrieved_context": retrieved_context,
+    }
+```
+
+- `python manage.py startapps chatbot` chatbot 앱을 생성하고
+- `chatbot/utils.py`에 위와 같은 챗봇 모듈을 작성합니다.
+
+### 3. consumer 설계
+
+Django 기준 `consumers.py`는 HTTP의 `views.py`와 유사한 역할을 하며, WebSocket 이벤트를 단위별로 처리합니다.
+
+```python
+# consumers.py
+
+from channels.generic.websocket import AsyncWebsocketConsumer
+import json
+
+class ChatConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        pass
+
+    async def receive(self, text_data):
+        data = json.loads(text_data)
+        user_message = data["message"]
+
+        llm_response = await self.llm_response(user_message)
+
+        await self.send(
+            text_data=json.dumps(
+                {"response": llm_response},
+                ensure_ascii=False,
+            )
+        )
+
+    async def llm_response(self, user_message):
+        llm_response = get_chatbot_response(user_message)
+        return llm_response.get("response")
+```
+
+- `connect()`
+  - 클라이언트가 WebSocket을 연결을 시도할 때 호출됩니다.
+  - `await self.accept()` 통해 WebSocket 연결을 수락합니다.
+  - `async` `await`는 `python`에서 지원하는 비동기 프래그래밍 키워드
+
+- `disconnect()`
+  - WebSocket 연결이 종료될 때 호출됩니다.
+
+- `receive`
+  - 클라이언트로부터 메시지를 받을 때 호출
+  - JSON 형태의 데이터를 파싱해, “message” 키의 값을 `user_message`에 저장합니다.
+  - `llm_response`를 호출해서 챗봇 응답을 가져옵니다.
+  - 챗봇 응답을 JSON 형식으로 직렬화해서 `self.send()`로 클라이언트에 전달합니다.
+  - JSON 직렬화 시 `ensure_ascii=False` 를 해줌으로써 ASCII 코드로 변환되지 않고 유니코드(ex. 한글)로 유지합니다.
+
+### 4. 라우팅 및 ASGI 설정
+
+```python
+# routing.py
+
+from django.urls import re_path
+
+from .consumers import ChatConsumer
+
+websocket_urlpatterns = [
+    re_path(r"^ws/chat/$", ChatConsumer.as_asgi()),
+]
+```
+
+- `path` 와 `re_path` 모두 url 패턴을 정의할 때 사용하지만, `re_path`는 정규 표현식 사용이 가능해서 특정 패턴을 더 정밀하게 제어할 때 사용합니다.
+- `^ws/chat/$` 에서 `^`(caret)는 문자열의 시작, `$`(dollar)는 문자열의 끝을 의미하는 것으로 정확히 /ws/chat/ 와 일치하는 경우에만 매칭해줍니다.
+
+```python
+# config/asgi.py
+
+import os
+
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
+from django.core.asgi import get_asgi_application
+
+from chatbot.routing import websocket_urlpatterns
+
+os.environ.setdefault("django_settings_module", "config.settings")
+
+application = ProtocolTypeRouter(
+    {
+        "http": get_asgi_application(),
+        "websocket": AuthMiddlewareStack(
+            URLRouter(websocket_urlpatterns)
+        ),
+    }
+)
+```
+
+- `ProtocolTypeRouter`: ASGI 어플리케이션에서 HTTP 요청과 WebSocket 요청을 분리하는 라우터
+- `UrlRouter`: WebSocket 요청을 특정 URL 패턴에 따라 처리하는 라우터
+- `AuthMiddlewareStack`: Django의 request.user 인증시스템을 WebSocket에서도 사용할 수 있게 해주는 미들웨어
+- `os.environ.setdefault("django_settings_module", "config.settings")`
+  - Django 프로젝트의 설정 파일을 환경 변수로 등록
+  - `get_asgi_application()` 을 호출할 때, Django 설정을 같이 불러옵니다.
+- `application = ProtocolTypeRouter(...)`
+  - HTTP 요청은 HTTP 요청을 처리하는 WSGI 어플리케이션으로 연결해줍니다.
+  - `chabot/routing.py`에서 정의한 WebSocket URL 패턴을 불러와서 WebSocket 요청을 해당 consumer로 라우팅
+
+## 🔄 마무리
+
+### 구현 성과
+
+Django Channels와 Daphne를 도입하여 기존 DRF 기반 REST API 구조를 유지하면서도,
+WebSocket을 통한 AINFO의 실시간 챗봇 기능을 성공적으로 구현했습니다.
+특히 Redis 기반 Channel Layer 도입으로 다중 서버 환경에서도 WebSocket 메시지를 안정적으로 브로드캐스팅할 수 있는 확장 가능한 구조를 마련했습니다.
+
+### 회고
+
+이전 BookGroo 프로젝트에서는 실시간 통신 필요성을 인지했지만, 개념에 대한 이해, 구현 능력의 부족으로 구현하지 못했었습니다.
+이번 AINFO 프로젝트에서는 WebSocket과 관련된 개념(WebSocket, ASGI, Channel Layer 등)을 정리하고 팀원들과 공유하는 시간을 가졌던 것이 성장에 도움이 되었던 것 같습니다.
+`Django Channels` 공식 문서의 tutorial을 직접 따라가면서 전체적인 흐름과 코드로 구현을 어떻게 하는지 익히는 시간을 가졌던 것이 큰 도움이 되었던 것 같습니다.
+
+이번 구현에서 개인적으로 가장 의미 있었던 점은 이전 프로젝트였던 BookGroo에서는 못했던 WebSocket 환경을  
+Django 기반 프로젝트에서 직접 구성하고 동작시켜 보았다는 점이었습니다.
+
+BookGroo 당시에도 실시간 통신의 필요성은 인지하고 있었지만 WebSocket에 대한 개념과 어떻게 구현하는지에 대한 지식도 부족했습니다.  
+이번 AINFO 프로젝트에서는 WebSocket, ASGI, Channel Layer와 같은 개념을 정리하고 팀원들과 기술 문서를 작성하며 논의하는 과정을 거쳤고,  
+그 과정 자체가 WebSocket을 이해하는 데 큰 도움이 되었습니다.
+
+특히 `Django Channels` 공식 문서의 tutorial을 따라가며 WebSocket 연결이 열리는 과정, Consumer가 호출되는 흐름,  
+HTTP 요청과 WebSocket 요청이 ASGI 레벨에서 어떻게 분리되어 처리되는지를 코드 단위로 익히고 우리 프로젝트에 녹여낸 경험이 인상 깊었습니다.
+
+### 개선 방향
+
+- **챗봇 로직의 비동기 처리**: 현재 LLM 호출 로직이 동기 함수로 구현되어 있어, LangChain의 비동기 메서드(ainvoke)로 전환하여 다중 사용자 요청 시 병렬 처리 성능 개선 필요
+- **스트리밍 응답**: LLM 응답을 한 번에 받는 대신, 생성되는 대로 실시간으로 전송하는 스트리밍 구현
+- **인증/권한 개선**: 현재 `AuthMiddlewareStack`만 적용했으나, 토큰 기반 인증으로 보안 강화 필요

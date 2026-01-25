@@ -1,0 +1,85 @@
+---
+layout: post
+title: "[Bookgroo] RAG 데이터 구축을 위한 YES24 신간도서 크롤러 구현하기"
+date: 2025-02-27 23:00:00 +0900
+categories:
+  - devlog
+notice: |
+  ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
+---
+
+# [Bookgroo] RAG 데이터 구축을 위한 YES24 신간도서 크롤러 구현하기
+
+## 🧭 배경 – RAG 시스템에 필요한 데이터 확보
+
+Bookgroo 프로젝트에서는 LangChain 기반 RAG(Retrieval-Augmented Generation) 구조를 사용했습니다.
+LLM이 더 풍부한 도서 정보를 제공하려면, 신뢰할 수 있는 최신 도서 데이터를 확보하는 것이 필수였습니다.
+이에 따라, 저는 YES24의 신간 도서 정보를 수집하는 크롤러를 구현했습니다.
+
+## ⚙️ 기술적 의사결정 – BeautifulSoup을 선택한 이유
+
+데이터 크롤링을 위헤 여러 도구들을 검토했지만, 최종적으로는 `BeautifulSoup`을 사용하기로 결정했습니다. `BeautifulSoup`은 Python 기반의 HTML 파싱 라이브러리로, 저희 프로젝트의 주요 기술 스택인 Python과 Django 환경에 자연스럽게 연동할 수 있었습니다. 새로운 언어나 프레임워크를 추가로 학습할 필요가 없기 때문에, 제한된 기간 안에 빠르게 적용할 있다는 점이 장점이었습니다.  
+또한, 도서 데이터를 제공하는 주요 사이트들을 살펴본 결과, 교보문고는 React 기반의 동적 페이지로 구성되어 있어, Selenium이나 Scrapy 같은 고급 크롤링 도구가 필요했지만, Yes24는 정적 HTML 구조로 되어 있어 BeautifulSoup만으로도 안정적인 데이터 수집이 가능했습니다.
+짧은 프로젝트 기간 동안 동적 렌더링 구조를 완전히 이해하기보다는, 동작 원리를 명확히 파악할 수 있는 단순하고 직관적인 접근 방식을 선택하는 것이 더 효율적이라 판단했습니다.
+
+## 🧩 구현 과정 – BeautifulSoup 기반 크롤러 설계
+
+YES24의 HTML 구조에서 신간 도서 목록은 .item_info 클래스로 감싸져 있었고,
+그 안에 제목(.gd_name), 저자(.info_auth), 출판사(.info_pubGrp) 등의 정보가 정리되어 있었습니다.
+이 구조를 바탕으로 필요한 요소만 선택적으로 파싱하도록 크롤러를 설계했습니다.
+
+```python
+response = requests.get(url, headers=headers, timeout=10)
+soup = BeautifulSoup(response.text, "html.parser")
+
+books = soup.select(".item_info")
+for book in books:
+    title_element = book.select_one("a.gd_name")
+    author_element = book.select_one("span.info_auth a")
+    publisher_element = book.select_one("span:nth-of-type(2)")
+```
+
+YES24는 각 도서의 상세 페이지에만 책 설명(description)과 장르(genre) 정보가 포함되어 있었기 때문에,
+리스트 페이지에서 도서별 링크를 추출한 뒤 urljoin()으로 절대 경로를 생성해 상세 페이지를 추가로 요청했습니다.
+
+```python
+href = title_element["href"]
+detail_url = urljoin(base_url, href)
+
+detail_response = requests.get(detail_url, headers=headers, timeout=10)
+detail_soup = BeautifulSoup(detail_response.text, "html.parser")
+
+description = detail_soup.select_one("textarea.txtContentText")
+description = description.text.strip() if description else "설명 없음"
+```
+
+롤링 과정에서는 서버 부하를 최소화하기 위해 요청 간 랜덤한 대기 시간(random delay) 을 추가했습니다.
+
+```python
+import time, random
+time.sleep(random.uniform(1, 3))  # 1~3초 랜덤 대기
+```
+
+또한 일부 도서에서는 특정 정보(저자, 장르 등)가 누락되어 있어 예외 처리가 필요했습니다.
+크롤러가 중간에 멈추지 않도록 try/except 구문과 기본값을 함께 적용했습니다.
+
+```python
+try:
+    author = author_element.text.strip() if author_element else "저자 없음"
+    pub_date = pub_date_element.text.strip() if pub_date_element else "출판일 없음"
+except AttributeError:
+    print("⚠️ 정보 누락: 기본값으로 대체")
+```
+
+마지막으로 수집한 데이터를 pandas의 DataFrame 형태로 정리하고, CSV 파일로 저장했습니다.
+
+```python
+df = pd.DataFrame(data, columns=["title", "author", "publisher", "pub_date", "genres", "description"])
+df.to_csv("data/result_final_with_genres.csv", index=False, encoding="utf-8-sig")
+```
+
+## 🔄 마무리와 개선에 대한 생각
+
+현재는 크롤링 스크립트를 실행할 때마다 신간 도서 데이터를 직접 수집하고 CSV 파일을 갱신하는 방식으로 운영하고 있습니다.
+이 방식은 단기 프로젝트에서는 충분히 효율적이었지만, 시간이 지남에 따라 도서 데이터가 계속 추가되는 YES24의 특성상,
+데이터 최신성을 유지하기 위해 주기적 자동화가 필요하다는 점을 느꼈습니다. 이를 위해서는 Celery beat 같은 스케쥴러를 사용해 주기적으로 크롤러를 실행하는 방안을 생각해볼 수 있을 것 같습니다.
