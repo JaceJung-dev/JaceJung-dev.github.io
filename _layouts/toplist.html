@@ -1,0 +1,98 @@
+---
+layout: page
+---
+
+{{ content }}
+
+{%- assign top = page.slug -%}
+{%- assign posts = site.categories[top] | default: site.tags[top] -%}
+
+{%- comment -%}
+상위 카테고리에 속한 글이 없으면 안내 문구 출력
+{%- endcomment -%}
+{%- if posts == nil or posts == empty -%}
+  <p class="muted" style="text-align:center; margin:2rem 0;">
+    이 카테고리에 등록된 글이 아직 없습니다 🕊️
+  </p>
+{%- else -%}
+
+  {%- comment -%}
+  모든 글에서 "top"을 제외한 서브카테고리 후보를 수집
+  (카테고리 우선, 없으면 태그에서 추출)
+  {%- endcomment -%}
+  {%- assign subcats = "" | split:"" -%}
+  {%- for p in posts -%}
+    {%- assign subs_c = p.categories | where_exp:"c","c != top" -%}
+    {%- assign subs_t = p.tags       | where_exp:"t","t != top" -%}
+    {%- assign subs   = subs_c -%}
+    {%- if subs == empty -%}{%- assign subs = subs_t -%}{%- endif -%}
+    {%- if subs == empty -%}
+      {%- assign subcats = subcats | concat: "Uncategorized" | split:"|" -%}
+    {%- else -%}
+      {%- assign subcats = subcats | concat: subs -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- assign subcats = subcats | uniq | sort -%}
+
+  {%- comment -%}
+  날짜 포맷 (Hydejack 기본과 호환)
+  {%- endcomment -%}
+  {%- assign date_formats  = site.data.strings.date_formats -%}
+  {%- assign list_entry    = date_formats.list_entry | default:"%d %b" -%}
+
+  {%- comment -%}
+  서브카테고리별로 최대 표시 개수 (페이지별로 바꾸고 싶으면 front matter에 per_sub_limit 지정)
+  {%- endcomment -%}
+  {%- assign per_sub_limit = page.per_sub_limit | default: 5 -%}
+
+  {%- for sub in subcats -%}
+    {%- comment -%}
+    서브카테고리 상세 페이지 URL 및 title 찾기
+    {%- endcomment -%}
+    {%- assign sub_page = site.pages | where: "slug", sub | first -%}
+    {%- if sub_page == nil -%}
+      {%- assign sub_page = site.featured_categories | where: "slug", sub | first -%}
+    {%- endif -%}
+
+    {%- if sub_page -%}
+      {%- assign sub_url = sub_page.url | relative_url -%}
+      {%- assign sub_title = sub_page.title | default: sub -%}
+    {%- else -%}
+      {%- assign sub_url = "/categories/" | append: sub | slugify | append: "/" | relative_url -%}
+      {%- assign sub_title = sub -%}
+    {%- endif -%}
+
+
+    {%- if sub == "Uncategorized" -%}
+      {%- assign grouped = posts | where_exp:"p","(p.categories | where_exp:'c','c != top') == empty and (p.tags | where_exp:'t','t != top') == empty" -%}
+    {%- else -%}
+      {%- assign grouped_by_cat = posts | where_exp:"p","p.categories contains sub" -%}
+      {%- assign grouped_by_tag = posts | where_exp:"p","p.tags contains sub" -%}
+      {%- assign grouped = grouped_by_cat | concat: grouped_by_tag | uniq -%}
+    {%- endif -%}
+    {%- assign grouped = grouped | sort: "date" | reverse -%}
+
+    {%- if grouped.size > 0 -%}
+      <h2 id="{{ sub | slugify }}" class="hr-bottom">
+        <a href="{{ sub_url }}">{{ sub_title }}</a>
+        {%- comment -%} (선택) 개수도 함께 표기하고 싶으면 아래 줄 주석 해제
+        <span class="muted">({{ grouped.size }})</span>
+        {%- endcomment -%}
+      </h2>
+
+      <ul class="related-posts">
+        {%- for post in grouped limit: per_sub_limit -%}
+          {%- include_cached components/post-list-item.html post=post format=list_entry -%}
+        {%- endfor -%}
+
+        {%- assign remaining = grouped.size | minus: per_sub_limit -%}
+        {%- if remaining > 0 -%}
+          <li class="more">
+            <a href="{{ sub_url }}">… more <span class="muted">(+{{ remaining }})</span></a>
+          </li>
+        {%- endif -%}
+      </ul>
+    {%- endif -%}
+  {%- endfor -%}
+
+{%- endif -%}

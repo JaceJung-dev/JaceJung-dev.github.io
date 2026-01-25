@@ -30,27 +30,19 @@ layout: base
   <hr class="dingbat related"/>
 
   {% if site.posts.size > 0 %}
-    <h2 class="hr-bottom">{{ strings.posts | default:"Posts" }}</h2>
+    <h2 class="hr-bottom">Recent Posts</h2>
     <ul class="related-posts">
-      {% for post in site.posts limit:5 %}
+      {% for post in site.posts limit:10 %}
         {% include_cached components/post-list-item.html post=post %}
       {% endfor %}
     </ul>
   {% endif %}
 
-  {% assign pages = site.html_pages | where:"layout","page" | where_exp:"page","page.sitemap != false" %}
-  {% if pages.size > 0 %}
-    <h2 class="hr-bottom">{{ strings.pages | default:"Pages" }}</h2>
-    <ul class="related-posts">
-      {% for page in pages limit:5 %}
-        {% if page.layout == 'page' %}
-          <li class="h4">
-            <a href="{{ page.url | relative_url }}" class="flip-title">
-              <span>{{ page.title }}</span>
-            </a>
-          </li>
-        {% endif %}
-      {% endfor %}
-    </ul>
+  {% assign about_page = site.pages | where:"title","About" | first %}
+  {% if about_page %}
+    <h2 class="hr-bottom">
+      <a href="{{ about_page.url | relative_url }}" class="flip-title">
+        {{ about_page.title }}
+      </a>
+    </h2>
   {% endif %}
-</article>

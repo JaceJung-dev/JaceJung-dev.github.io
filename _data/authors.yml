@@ -2,26 +2,48 @@
 # Must be the same as `author` in `_config.yml`.
 # Change `author1` to your shortname.
 author1:
-  name:              Jiwoong Jung
-  email:             jacejung.dev@gmail.com
+  name: Jiwoong Jung
+  email: jacejung.dev@gmail.com
 
   # Used at the bottom of each page and at the top of the `about` layout
   # Markdown enabled, can use multiple paragraphs (enabled by `|`)
-  about:             |
-    Aspiring AI service engineer and web developer 💻 with a passion for building intelligent systems using Python 🐍.
-
+  about: |
+    Aspiring AI service engineer and web developer 💻 with a passion for building intelligent systems.
     🌱 I’m currently learning:
-      - Machine learning fundamentals
-      - Natural language processing (NLP)
-      - AI system design and model architectures
+
+    - Machine learning fundamentals
+    - Natural language processing (NLP)
+    - AI system design and model architectures
+
+    ## 🚀 Experience & Training
+
+    > 🤖 **NAVER Connect Foundation, boostcamp AI Tech 8th**  
+    > Sep 2025 – **Present**  
+    > Trainee | Intensive training program focused on AI model development, machine learning pipelines, and deployment of deep learning systems.  
+    >
+    > 🌱 **Sparta Coding Club, Tomorrow Learning Camp – AI Track 9th**  
+    > Nov 2024 – Mar 2025  
+    > Trainee | Trained in Python, ML/DL fundamentals, and web development with Django/DRF; completed a capstone project implementing an AI service using LLM APIs.  
+    >
+    > 🧪 **Institute for Basic Science (IBS)**  
+    Jan 2023 – Nov 2024  
+    Researcher | Conducted bioinformatics and omics data analysis to identify molecular mechanisms underlying neuronal cell death.  
+
+
+    ## 📋 Projects & Research
+
+    | Project / Research | Period | Description |
+    |--------------------|--------|-------------|
+    |[AINFO: Personalized Public Service Recommendation Chatbot](https://github.com/JaceJung-dev/AInfo-Backend)  | Mar 2025 – Apr 2025 | LLM-based chatbot for personalized public service recommendations. Built with Django/DRF and deployed prototype. |
+    [H2O2-induced astrocytic collagen triggers neuronal death via fucosylation-dependent glial barrier formation upon ischemic stroke](https://www.biorxiv.org/content/10.1101/2025.05.01.651594v1) | Jan 2013 – Nov 2014 |  Performed RNA-seq/ATAC-seq data analysis using Python, R, and Linux, covering gene expression analysis with DESeq2/edgeR and visualization with ggplot2 |
 
   # This photo will be used in the about section
   picture:
-    path:            /assets/img/logo_128x128.png
+    path: /assets/img/logo_128x128.png
     # srcset is optional, but can be used to provide higher res versions for retina displays
     srcset:
-      1x:            /assets/img/logo_128x128.png
-      2x:            /assets/img/logo_256x256.png
+      1x: /assets/img/logo_128x128.png
+      2x: /assets/img/logo_256x256.png
 
   # Social media icons in sidebar
   # Comment/uncommet to show/hide
@@ -29,7 +51,7 @@ author1:
   # You can also provide an absolute URL (starting with https://) instead of usernames
   social:
     # twitter:         <username>
-    github:           JaceJung-dev
+    github: JaceJung-dev
     # email:           <mail@domain.tld>
     # rss:             https://<url>/feed.xml
     # facebook:        <username>
@@ -84,15 +106,15 @@ author1:
 
 # Another author (optional)
 author2:
-  name:              <firtname> <lastname>
-  email:             <mail@domain.tld>
-  about:             |
+  name: <firtname> <lastname>
+  email: <mail@domain.tld>
+  about: |
     Lorem ipsum dolor sit amet, consectetur adipiscing elit,
     sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
     Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
 
     Open `_data/authors.yml` to edit this text.
 
-  picture:           https://placehold.it/128x128
-  twitter:           <username>
-  github:            <username>
+  picture: https://placehold.it/128x128
+  twitter: <username>
+  github: <username>
