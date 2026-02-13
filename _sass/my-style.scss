@@ -83,10 +83,10 @@ mjx-container {
 .toc-wrapper {
   display: none;
 
-  @media (min-width: 1200px) {
+  @media (min-width: 1440px) {
     display: block;
     position: fixed;
-    top: 250px;
+    top: 300px;
     right: 6rem;
     width: 220px;
     max-height: calc(100vh - 160px);
