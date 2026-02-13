@@ -86,12 +86,15 @@ mjx-container {
   @media (min-width: 1200px) {
     display: block;
     position: fixed;
-    top: 120px;
+    top: 250px;
     right: 6rem;
     width: 220px;
     max-height: calc(100vh - 160px);
     overflow-y: auto;
     z-index: 10;
+
+    // Firefox transform 이슈 대응
+    will-change: transform;
   }
 }
 
