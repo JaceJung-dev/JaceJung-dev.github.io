@@ -69,6 +69,11 @@
   </header>
 
   {% if no_excerpt %}
+    <aside class="toc-wrapper">
+      <nav class="toc-nav">
+        {% include toc.html html=post.content h_min=2 h_max=3 %}
+      </nav>
+    </aside>
     {{ post.content }}
   {% else %}
     {{ post.excerpt }}
