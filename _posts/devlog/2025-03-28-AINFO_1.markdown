@@ -4,6 +4,8 @@ title: "[AINFO] Django Channels를 활용한 비동기 실시간 통신 설계�
 date: 2025-03-28 22:00:00 +0900
 categories:
   - devlog
+tags:
+  - AINFO
 notice: |
   ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
 ---

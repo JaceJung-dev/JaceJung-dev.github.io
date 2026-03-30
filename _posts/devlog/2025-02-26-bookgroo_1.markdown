@@ -4,6 +4,8 @@ title: "[Bookgroo] 코드보다 먼저, 문서로 시작한 Bookgroo 프로젝�
 date: 2025-02-26 22:00:00 +0900
 categories:
   - devlog
+tags:
+  - Bookgroo
 notice: |
   ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
 ---

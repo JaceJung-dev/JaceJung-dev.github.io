@@ -4,6 +4,8 @@ title: "[Bookgroo] RAG 데이터 구축을 위한 YES24 신간도서 크롤러 �
 date: 2025-02-27 23:00:00 +0900
 categories:
   - devlog
+tags:
+  - Bookgroo
 notice: |
   ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
 ---

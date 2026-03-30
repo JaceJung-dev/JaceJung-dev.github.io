@@ -4,6 +4,8 @@ title: "[AINFO] 실시간성을 위한 챗봇 로직 비동기 처리 및 Stream
 date: 2025-03-29 22:00:00 +0900
 categories:
   - devlog
+tags:
+  - AINFO
 notice: |
   ⚠️ **안내:** 이 글은 학습 기록용입니다. 오류나 보완 의견은 댓글로 알려주세요.
 ---
