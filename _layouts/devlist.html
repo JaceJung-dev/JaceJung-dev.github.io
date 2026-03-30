@@ -1,0 +1,132 @@
+---
+layout: page
+---
+
+{{ content }}
+
+{%- assign top = page.slug -%}
+{%- assign posts = site.categories[top] | default: site.tags[top] -%}
+
+{%- comment -%}
+상위 카테고리에 속한 글이 없으면 안내 문구 출력
+{%- endcomment -%}
+{%- if posts == nil or posts == empty -%}
+  <p class="muted" style="text-align:center; margin:2rem 0;">
+    이 카테고리에 등록된 글이 아직 없습니다 🕊️
+  </p>
+{%- else -%}
+
+  {%- comment -%}
+  모든 글에서 "top"을 제외한 서브카테고리 후보를 수집
+  (카테고리 우선, 없으면 태그에서 추출)
+  {%- endcomment -%}
+  {%- assign subcats = "" | split:"" -%}
+  {%- assign uncategorized_arr = "Uncategorized" | split:"," -%}
+  {%- for p in posts -%}
+    {%- if p.categories -%}
+      {%- assign subs_c = p.categories | where_exp:"c","c != top" -%}
+    {%- else -%}
+      {%- assign subs_c = "" | split:"" -%}
+    {%- endif -%}
+    {%- if p.tags -%}
+      {%- assign subs_t = p.tags | where_exp:"t","t != top" -%}
+    {%- else -%}
+      {%- assign subs_t = "" | split:"" -%}
+    {%- endif -%}
+    {%- assign subs = subs_c -%}
+    {%- if subs == empty -%}{%- assign subs = subs_t -%}{%- endif -%}
+    {%- if subs == empty -%}
+      {%- assign subcats = subcats | concat: uncategorized_arr -%}
+    {%- else -%}
+      {%- assign subcats = subcats | concat: subs -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- comment -%}
+  최신 포스트를 가진 태그가 위로 오도록 정렬
+  (posts는 Jekyll이 날짜 내림차순으로 제공하므로, 첫 등장 순서 = 최신 순)
+  {%- endcomment -%}
+  {%- assign subcats_ordered = "" | split:"" -%}
+  {%- for p in posts -%}
+    {%- if p.tags -%}
+      {%- assign p_subs = p.tags | where_exp:"t","t != top" -%}
+    {%- else -%}
+      {%- assign p_subs = "" | split:"" -%}
+    {%- endif -%}
+    {%- if p.categories -%}
+      {%- assign p_subs_c = p.categories | where_exp:"c","c != top" -%}
+    {%- else -%}
+      {%- assign p_subs_c = "" | split:"" -%}
+    {%- endif -%}
+    {%- if p_subs == empty -%}{%- assign p_subs = p_subs_c -%}{%- endif -%}
+    {%- for s in p_subs -%}
+      {%- unless subcats_ordered contains s -%}
+        {%- assign s_arr = s | split:"|||" -%}
+        {%- assign subcats_ordered = subcats_ordered | concat: s_arr -%}
+      {%- endunless -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {%- assign subcats = subcats_ordered -%}
+
+  {%- comment -%}
+  날짜 포맷 (Hydejack 기본과 호환)
+  {%- endcomment -%}
+  {%- assign date_formats  = site.data.strings.date_formats -%}
+  {%- assign list_entry    = date_formats.list_entry | default:"%d %b" -%}
+
+  {%- for sub in subcats -%}
+    {%- comment -%}
+    서브카테고리 상세 페이지 URL 및 title 찾기
+    {%- endcomment -%}
+    {%- assign sub_page = site.pages | where: "slug", sub | first -%}
+    {%- if sub_page == nil -%}
+      {%- assign sub_page = site.featured_categories | where: "slug", sub | first -%}
+    {%- endif -%}
+
+    {%- if sub_page -%}
+      {%- assign sub_url = sub_page.url | relative_url -%}
+      {%- assign sub_title = sub_page.title | default: sub -%}
+    {%- else -%}
+      {%- assign sub_url = "/categories/" | append: sub | slugify | append: "/" | relative_url -%}
+      {%- assign sub_title = sub -%}
+    {%- endif -%}
+
+
+    {%- if sub == "Uncategorized" -%}
+      {%- assign grouped = "" | split:"" -%}
+      {%- for p in posts -%}
+        {%- assign has_sub = false -%}
+        {%- if p.categories -%}
+          {%- for c in p.categories -%}
+            {%- if c != top -%}{%- assign has_sub = true -%}{%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
+        {%- if p.tags and has_sub == false -%}
+          {%- for t in p.tags -%}
+            {%- if t != top -%}{%- assign has_sub = true -%}{%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
+        {%- unless has_sub -%}
+          {%- assign grouped = grouped | push: p -%}
+        {%- endunless -%}
+      {%- endfor -%}
+    {%- else -%}
+      {%- assign grouped_by_cat = posts | where_exp:"p","p.categories contains sub" -%}
+      {%- assign grouped_by_tag = posts | where_exp:"p","p.tags contains sub" -%}
+      {%- assign grouped = grouped_by_cat | concat: grouped_by_tag | uniq -%}
+    {%- endif -%}
+    {%- assign grouped = grouped | sort: "date" | reverse -%}
+
+    {%- if grouped.size > 0 -%}
+      <h2 id="{{ sub | slugify }}" class="hr-bottom">
+        <a href="{{ sub_url }}">{{ sub_title }}</a>
+      </h2>
+
+      <ul class="related-posts">
+        {%- for post in grouped -%}
+          {%- include_cached components/post-list-item.html post=post format=list_entry -%}
+        {%- endfor -%}
+      </ul>
+    {%- endif -%}
+  {%- endfor -%}
+
+{%- endif -%}

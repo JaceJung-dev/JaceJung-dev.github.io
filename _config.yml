@@ -73,6 +73,11 @@ menu:
     submenu:
       - title: PyTorch
       - url: /pytorch/
+      - title: LangChain
+      - url: /langchain/
+      - title: Neo4j
+      - url: /neo4j/
+
 # - title:             Documentation
 #   url:               /docs/
 # - title:             About
